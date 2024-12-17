@@ -55,12 +55,11 @@ var details = function () { return ({
             label: 'Arr',
             name: 'arr',
             type: 'string',
-            defaultValue: 'radarr',
+            defaultValue: '',
             inputUI: {
-                type: 'dropdown',
-                options: ['radarr', 'sonarr'],
+                type: 'text',
             },
-            tooltip: 'Specify which arr to use',
+            tooltip: 'Specify which arr to use: sonarr or radarr',
         },
         {
             label: 'Arr API Key',

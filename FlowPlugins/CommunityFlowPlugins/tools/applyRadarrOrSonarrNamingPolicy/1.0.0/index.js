@@ -46,12 +46,8 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
         if (op[0] & 5) throw op[1]; return { value: op[0] ? op[1] : void 0, done: true };
     }
 };
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.plugin = exports.details = void 0;
-var fileMoveOrCopy_1 = __importDefault(require("../../../../FlowHelpers/1.0.0/fileMoveOrCopy"));
 var fileUtils_1 = require("../../../../FlowHelpers/1.0.0/fileUtils");
 var details = function () { return ({
     name: 'Apply Radarr or Sonarr naming policy',
@@ -71,10 +67,9 @@ var details = function () { return ({
             label: 'Arr',
             name: 'arr',
             type: 'string',
-            defaultValue: 'radarr',
+            defaultValue: '{{{args.userVariables.library.arr}}}',
             inputUI: {
-                type: 'dropdown',
-                options: ['radarr', 'sonarr'],
+                type: 'text',
             },
             tooltip: 'Specify which arr to use',
         },
@@ -82,7 +77,7 @@ var details = function () { return ({
             label: 'Arr API Key',
             name: 'arr_api_key',
             type: 'string',
-            defaultValue: '',
+            defaultValue: '{{{args.userVariables.library.api}}}',
             inputUI: {
                 type: 'text',
             },
@@ -92,7 +87,7 @@ var details = function () { return ({
             label: 'Arr Host',
             name: 'arr_host',
             type: 'string',
-            defaultValue: 'http://192.168.1.1:7878',
+            defaultValue: '{{{args.userVariables.library.host}}}',
             inputUI: {
                 type: 'text',
             },
@@ -102,6 +97,16 @@ var details = function () { return ({
                 + 'http://192.168.1.1:8989\\n'
                 + 'https://radarr.domain.com\\n'
                 + 'https://sonarr.domain.com\\n',
+        },
+        {
+            label: 'Startup delay',
+            name: 'startup_delay',
+            type: 'number',
+            defaultValue: '{{{args.userVariables.library.delay}}}',
+            inputUI: {
+                type: 'text',
+            },
+            tooltip: 'Specify the startup delay for this plugin. This waits for sonarr/radarr to pick up any notify changes.',
         },
     ],
     outputs: [
@@ -116,6 +121,37 @@ var details = function () { return ({
     ],
 }); };
 exports.details = details;
+var getSizeBytes = function (fPath) { return __awaiter(void 0, void 0, void 0, function () {
+    var size, err_1;
+    return __generator(this, function (_a) {
+        switch (_a.label) {
+            case 0:
+                size = 0;
+                _a.label = 1;
+            case 1:
+                _a.trys.push([1, 3, , 4]);
+                return [4 /*yield*/, (0, fileUtils_1.getFileSize)(fPath)];
+            case 2:
+                size = _a.sent();
+                return [3 /*break*/, 4];
+            case 3:
+                err_1 = _a.sent();
+                return [3 /*break*/, 4];
+            case 4: return [2 /*return*/, size];
+        }
+    });
+}); };
+var compareOldNew = function (_a) {
+    var sourceFileSize = _a.sourceFileSize, destinationSize = _a.destinationSize, args = _a.args;
+    if (destinationSize !== sourceFileSize) {
+        args.jobLog("After move/copy, destination file of size ".concat(destinationSize, " does not match")
+            + " cache file of size ".concat(sourceFileSize));
+    }
+    else {
+        args.jobLog("After move/copy, destination file of size ".concat(destinationSize, " does match")
+            + " cache file of size ".concat(sourceFileSize));
+    }
+};
 var getFileInfoFromLookup = function (args, arrApp, fileName) { return __awaiter(void 0, void 0, void 0, function () {
     var fInfo, imdbId, lookupResponse;
     var _a, _b;
@@ -174,7 +210,7 @@ var getFileInfo = function (args, arrApp, fileName) { return __awaiter(void 0, v
     });
 }); };
 var plugin = function (args) { return __awaiter(void 0, void 0, void 0, function () {
-    var lib, newPath, isSuccessful, arr, arr_host, arrHost, originalFileName, currentFileName, headers, arrApp, fInfo, previewRenameRequestResult, fileToRename;
+    var lib, newPath, isSuccessful, arr, startup_delay, arr_host, arrHost, originalFileName, currentFileName, headers, arrApp, fInfo, previewRenameRequestResult, fileToRename, sourceFileSize, error_1, destinationSize;
     var _a, _b, _c, _d;
     return __generator(this, function (_e) {
         switch (_e.label) {
@@ -184,7 +220,8 @@ var plugin = function (args) { return __awaiter(void 0, void 0, void 0, function
                 args.inputs = lib.loadDefaultValues(args.inputs, details);
                 newPath = '';
                 isSuccessful = false;
-                arr = String(args.inputs.arr);
+                arr = String(args.inputs.arr).trim();
+                startup_delay = Number(args.inputs.startup_delay);
                 arr_host = String(args.inputs.arr_host).trim();
                 arrHost = arr_host.endsWith('/') ? arr_host.slice(0, -1) : arr_host;
                 originalFileName = (_b = (_a = args.originalLibraryFile) === null || _a === void 0 ? void 0 : _a._id) !== null && _b !== void 0 ? _b : '';
@@ -205,6 +242,14 @@ var plugin = function (args) { return __awaiter(void 0, void 0, void 0, function
                             getFileInfoFromParseResponse: function (parseResponse) { var _a, _b, _c; return ({ id: String((_c = (_b = (_a = parseResponse === null || parseResponse === void 0 ? void 0 : parseResponse.data) === null || _a === void 0 ? void 0 : _a.movie) === null || _b === void 0 ? void 0 : _b.id) !== null && _c !== void 0 ? _c : -1) }); },
                             buildPreviewRenameResquestUrl: function (fInfo) { return "".concat(arrHost, "/api/v3/rename?movieId=").concat(fInfo.id); },
                             getFileToRenameFromPreviewRenameResponse: function (previewRenameResponse) { var _a; return (_a = previewRenameResponse.data) === null || _a === void 0 ? void 0 : _a.at(0); },
+                            buildRenameDataFromPreviewRenameResponse: function (fileToRename) {
+                                var _a, _b;
+                                return ({
+                                    name: 'RenameFiles',
+                                    movieId: (_a = fileToRename.movieId) !== null && _a !== void 0 ? _a : -1,
+                                    files: [(_b = fileToRename.movieFileId) !== null && _b !== void 0 ? _b : -1],
+                                });
+                            },
                         },
                     }
                     : {
@@ -238,45 +283,85 @@ var plugin = function (args) { return __awaiter(void 0, void 0, void 0, function
                                 var _a;
                                 return (_a = previewRenameResponse.data) === null || _a === void 0 ? void 0 : _a.find(function (episodeFile) { var _a; return ((_a = episodeFile.episodeNumbers) === null || _a === void 0 ? void 0 : _a.at(0)) === fInfo.episodeNumber; });
                             },
+                            buildRenameDataFromPreviewRenameResponse: function (fileToRename) {
+                                var _a, _b;
+                                return ({
+                                    name: 'RenameFiles',
+                                    seriesId: (_a = fileToRename.seriesId) !== null && _a !== void 0 ? _a : -1,
+                                    files: [(_b = fileToRename.episodeFileId) !== null && _b !== void 0 ? _b : -1],
+                                });
+                            },
                         },
                     };
                 args.jobLog('Going to apply new name');
                 args.jobLog("Renaming ".concat(arrApp.name, "..."));
-                return [4 /*yield*/, getFileInfo(args, arrApp, originalFileName)];
+                return [4 /*yield*/, new Promise(function (f) { return setTimeout(f, startup_delay); })];
             case 1:
-                fInfo = _e.sent();
-                if (!(fInfo.id === '-1' && currentFileName !== originalFileName)) return [3 /*break*/, 3];
-                return [4 /*yield*/, getFileInfo(args, arrApp, currentFileName)];
+                _e.sent();
+                return [4 /*yield*/, getFileInfo(args, arrApp, originalFileName)];
             case 2:
                 fInfo = _e.sent();
-                _e.label = 3;
+                if (!(fInfo.id === '-1' && currentFileName !== originalFileName)) return [3 /*break*/, 4];
+                return [4 /*yield*/, getFileInfo(args, arrApp, currentFileName)];
             case 3:
-                if (!(fInfo.id !== '-1')) return [3 /*break*/, 7];
+                fInfo = _e.sent();
+                _e.label = 4;
+            case 4:
+                if (!(fInfo.id !== '-1')) return [3 /*break*/, 14];
                 return [4 /*yield*/, args.deps.axios({
                         method: 'get',
                         url: arrApp.delegates.buildPreviewRenameResquestUrl(fInfo),
                         headers: headers,
                     })];
-            case 4:
+            case 5:
                 previewRenameRequestResult = _e.sent();
                 fileToRename = arrApp.delegates
                     .getFileToRenameFromPreviewRenameResponse(previewRenameRequestResult, fInfo);
-                if (!(fileToRename !== undefined)) return [3 /*break*/, 6];
+                if (!(fileToRename !== undefined)) return [3 /*break*/, 13];
                 newPath = "".concat((0, fileUtils_1.getFileAbosluteDir)(currentFileName), "/").concat((0, fileUtils_1.getFileName)(fileToRename.newPath), ".").concat((0, fileUtils_1.getContainer)(fileToRename.newPath));
-                return [4 /*yield*/, (0, fileMoveOrCopy_1.default)({
-                        operation: 'move',
-                        sourcePath: currentFileName,
-                        destinationPath: newPath,
-                        args: args,
-                    })];
-            case 5:
-                isSuccessful = _e.sent();
-                return [3 /*break*/, 7];
+                args.jobLog("New path is ".concat(newPath));
+                args.jobLog('Calculating cache file size in bytes');
+                return [4 /*yield*/, getSizeBytes(currentFileName)];
             case 6:
+                sourceFileSize = _e.sent();
+                args.jobLog("".concat(sourceFileSize));
+                args.jobLog(JSON.stringify(fileToRename));
+                args.jobLog(JSON.stringify(arrApp.delegates.buildRenameDataFromPreviewRenameResponse(fileToRename)));
+                isSuccessful = true;
+                _e.label = 7;
+            case 7:
+                _e.trys.push([7, 10, , 11]);
+                return [4 /*yield*/, args.deps.axios({
+                        method: 'post',
+                        url: "".concat(arrApp.host, "/api/v3/command"),
+                        headers: headers,
+                        data: arrApp.delegates.buildRenameDataFromPreviewRenameResponse(fileToRename),
+                    })];
+            case 8:
+                _e.sent();
+                return [4 /*yield*/, new Promise(function (f) { return setTimeout(f, 5000); })];
+            case 9:
+                _e.sent();
+                return [3 /*break*/, 11];
+            case 10:
+                error_1 = _e.sent();
+                isSuccessful = false;
+                args.jobLog(JSON.stringify(error_1));
+                return [3 /*break*/, 11];
+            case 11: return [4 /*yield*/, getSizeBytes(newPath)];
+            case 12:
+                destinationSize = _e.sent();
+                compareOldNew({
+                    sourceFileSize: sourceFileSize,
+                    destinationSize: destinationSize,
+                    args: args,
+                });
+                return [3 /*break*/, 14];
+            case 13:
                 isSuccessful = true;
                 args.jobLog('✔ No rename necessary.');
-                _e.label = 7;
-            case 7: return [2 /*return*/, {
+                _e.label = 14;
+            case 14: return [2 /*return*/, {
                     outputFileObj: isSuccessful && newPath !== ''
                         ? __assign(__assign({}, args.inputFileObj), { _id: newPath }) : args.inputFileObj,
                     outputNumber: isSuccessful ? 1 : 2,

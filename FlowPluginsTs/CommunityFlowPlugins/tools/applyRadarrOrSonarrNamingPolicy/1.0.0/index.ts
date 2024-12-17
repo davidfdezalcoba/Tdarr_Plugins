@@ -1,6 +1,8 @@
-import fileMoveOrCopy from '../../../../FlowHelpers/1.0.0/fileMoveOrCopy';
 import {
-  getContainer, getFileAbosluteDir, getFileName,
+  getFileSize,
+  getContainer,
+  getFileAbosluteDir,
+  getFileName,
 } from '../../../../FlowHelpers/1.0.0/fileUtils';
 import {
   IpluginDetails,
@@ -27,10 +29,9 @@ const details = (): IpluginDetails => ({
       label: 'Arr',
       name: 'arr',
       type: 'string',
-      defaultValue: 'radarr',
+      defaultValue: '{{{args.userVariables.library.arr}}}',
       inputUI: {
-        type: 'dropdown',
-        options: ['radarr', 'sonarr'],
+        type: 'text',
       },
       tooltip: 'Specify which arr to use',
     },
@@ -38,7 +39,7 @@ const details = (): IpluginDetails => ({
       label: 'Arr API Key',
       name: 'arr_api_key',
       type: 'string',
-      defaultValue: '',
+      defaultValue: '{{{args.userVariables.library.api}}}',
       inputUI: {
         type: 'text',
       },
@@ -48,7 +49,7 @@ const details = (): IpluginDetails => ({
       label: 'Arr Host',
       name: 'arr_host',
       type: 'string',
-      defaultValue: 'http://192.168.1.1:7878',
+      defaultValue: '{{{args.userVariables.library.host}}}',
       inputUI: {
         type: 'text',
       },
@@ -58,6 +59,16 @@ const details = (): IpluginDetails => ({
         + 'http://192.168.1.1:8989\\n'
         + 'https://radarr.domain.com\\n'
         + 'https://sonarr.domain.com\\n',
+    },
+    {
+      label: 'Startup delay',
+      name: 'startup_delay',
+      type: 'number',
+      defaultValue: '{{{args.userVariables.library.delay}}}',
+      inputUI: {
+        type: 'text',
+      },
+      tooltip: 'Specify the startup delay for this plugin. This waits for sonarr/radarr to pick up any notify changes.',
     },
   ],
   outputs: [
@@ -97,7 +108,17 @@ interface IParseResponse {
 }
 interface IFileToRename {
   newPath: string,
+  movieId?: number,
+  movieFileId?: number,
+  seriesId?: number,
+  episodeFileId?: number,
   episodeNumbers?: number[]
+}
+interface IRenameDataToSend {
+  movieId?: number,
+  seriesId?: number,
+  files: number[],
+  name: 'RenameFiles'
 }
 interface IPreviewRenameResponse {
   data: IFileToRename[]
@@ -115,9 +136,39 @@ interface IArrApp {
     buildPreviewRenameResquestUrl:
     (fileInfo: IFileInfo) => string,
     getFileToRenameFromPreviewRenameResponse:
-    (previewRenameResponse: IPreviewRenameResponse, fileInfo: IFileInfo) => IFileToRename | undefined
+    (previewRenameResponse: IPreviewRenameResponse, fileInfo: IFileInfo) => IFileToRename | undefined,
+    buildRenameDataFromPreviewRenameResponse:
+    (fileToRename: IFileToRename) => IRenameDataToSend
   }
 }
+
+const getSizeBytes = async (fPath: string): Promise<number> => {
+  let size = 0;
+  try {
+    size = await getFileSize(fPath);
+  } catch (err) {
+    // err
+  }
+  return size;
+};
+
+const compareOldNew = ({
+  sourceFileSize,
+  destinationSize,
+  args,
+}:{
+    sourceFileSize:number,
+    destinationSize:number,
+    args:IpluginInputArgs,
+  }):void => {
+  if (destinationSize !== sourceFileSize) {
+    args.jobLog(`After move/copy, destination file of size ${destinationSize} does not match`
+      + ` cache file of size ${sourceFileSize}`);
+  } else {
+    args.jobLog(`After move/copy, destination file of size ${destinationSize} does match`
+      + ` cache file of size ${sourceFileSize}`);
+  }
+};
 
 const getFileInfoFromLookup = async (
   args: IpluginInputArgs,
@@ -177,7 +228,8 @@ const plugin = async (args: IpluginInputArgs): Promise<IpluginOutputArgs> => {
 
   let newPath = '';
   let isSuccessful = false;
-  const arr = String(args.inputs.arr);
+  const arr = String(args.inputs.arr).trim();
+  const startup_delay = Number(args.inputs.startup_delay);
   const arr_host = String(args.inputs.arr_host).trim();
   const arrHost = arr_host.endsWith('/') ? arr_host.slice(0, -1) : arr_host;
   const originalFileName = args.originalLibraryFile?._id ?? '';
@@ -203,6 +255,12 @@ const plugin = async (args: IpluginInputArgs): Promise<IpluginOutputArgs> => {
           (fInfo) => `${arrHost}/api/v3/rename?movieId=${fInfo.id}`,
         getFileToRenameFromPreviewRenameResponse:
           (previewRenameResponse) => previewRenameResponse.data?.at(0),
+        buildRenameDataFromPreviewRenameResponse:
+          (fileToRename) => ({
+            name: 'RenameFiles',
+            movieId: fileToRename.movieId ?? -1,
+            files: [fileToRename.movieFileId ?? -1],
+          }),
       },
     }
     : {
@@ -235,11 +293,19 @@ const plugin = async (args: IpluginInputArgs): Promise<IpluginOutputArgs> => {
         getFileToRenameFromPreviewRenameResponse:
           (previewRenameResponse, fInfo) => previewRenameResponse.data
             ?.find((episodeFile) => episodeFile.episodeNumbers?.at(0) === fInfo.episodeNumber),
+        buildRenameDataFromPreviewRenameResponse:
+          (fileToRename) => ({
+            name: 'RenameFiles',
+            seriesId: fileToRename.seriesId ?? -1,
+            files: [fileToRename.episodeFileId ?? -1],
+          }),
       },
     };
 
   args.jobLog('Going to apply new name');
   args.jobLog(`Renaming ${arrApp.name}...`);
+
+  await new Promise((f) => setTimeout(f, startup_delay));
 
   // Retrieving movie or serie id, plus season and episode number for serie
   let fInfo = await getFileInfo(args, arrApp, originalFileName);
@@ -261,16 +327,44 @@ const plugin = async (args: IpluginInputArgs): Promise<IpluginOutputArgs> => {
 
     // Only if there is a rename to execute
     if (fileToRename !== undefined) {
-      newPath = `${getFileAbosluteDir(currentFileName)
-      }/${getFileName(fileToRename.newPath)
-      }.${getContainer(fileToRename.newPath)}`;
+      newPath = `${getFileAbosluteDir(currentFileName)}/${
+        getFileName(fileToRename.newPath)}.${
+        getContainer(fileToRename.newPath)}`;
 
-      isSuccessful = await fileMoveOrCopy({
-        operation: 'move',
-        sourcePath: currentFileName,
-        destinationPath: newPath,
+      args.jobLog(`New path is ${newPath}`);
+      args.jobLog('Calculating cache file size in bytes');
+      const sourceFileSize = await getSizeBytes(currentFileName);
+      args.jobLog(`${sourceFileSize}`);
+      args.jobLog(JSON.stringify(fileToRename));
+      args.jobLog(JSON.stringify(arrApp.delegates.buildRenameDataFromPreviewRenameResponse(fileToRename)));
+
+      isSuccessful = true;
+      try {
+        await args.deps.axios({
+          method: 'post',
+          url: `${arrApp.host}/api/v3/command`,
+          headers,
+          data: arrApp.delegates.buildRenameDataFromPreviewRenameResponse(fileToRename),
+        });
+        await new Promise((f) => setTimeout(f, 5000));
+      } catch (error) {
+        isSuccessful = false;
+        args.jobLog(JSON.stringify(error));
+      }
+
+      const destinationSize = await getSizeBytes(newPath);
+      compareOldNew({
+        sourceFileSize,
+        destinationSize,
         args,
       });
+
+      // isSuccessful = await fileMoveOrCopy({
+      //   operation: 'move',
+      //   sourcePath: currentFileName,
+      //   destinationPath: newPath,
+      //   args,
+      // });
     } else {
       isSuccessful = true;
       args.jobLog('✔ No rename necessary.');
